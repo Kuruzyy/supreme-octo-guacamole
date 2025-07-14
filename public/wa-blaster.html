@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WA-Blaster</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 10px; margin: 0; }
+    .container { max-width: 80%; margin: auto; border: 2px solid #000; }
+    h1 { text-align: center; margin: 0; padding: 10px; background-color: #f0f0f0; border-bottom: 2px solid #000; font-size: 18px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; }
+    .grid-item { border: 1px solid #000; padding: 8px; font-size: 14px; }
+    .grid-item:nth-child(odd) { border-left: none; }
+    .grid-item:nth-child(even) { border-right: none; }
+    .grid-item:nth-child(1), .grid-item:nth-child(2) { border-top: none; }
+    .grid-item:nth-last-child(1), .grid-item:nth-last-child(2) { border-bottom: none; }
+    .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    button { padding: 4px 8px; font-size: 12px; border: 1px solid #000; background-color: #f0f0f0; cursor: pointer; }
+    button:hover { background-color: #e0e0e0; }
+    button:disabled { background-color: #ccc; cursor: not-allowed; }
+    .button-danger { background-color: #ffcccc; border-color: #f00; color: #c00; }
+    .button-danger:hover { background-color: #ffaaaa; }
+    .button-send { background-color: #ccffcc; border-color: #090; color: #060; }
+    .button-send:hover { background-color: #aaffaa; }
+    .status-text { font-size: 12px; color: #666; }
+    .logs-section, .right-panel { height: 450px; }
+    .logs-area, .whitelist-area { width: 100%; height: 100%; border: none; outline: none; resize: none; padding: 5px; font-family: monospace; font-size: 12px; box-sizing: border-box; }
+    .logs-area { background-color: #f9f9f9; }
+    .whitelist-area { background-color: white; }
+    .status-indicator { display: inline-block; padding: 4px 8px; margin-left: 10px; border-radius: 4px; color: #fff; font-size: 12px; }
+    .status-online { background: #5cb85c; }
+    .status-offline { background: #d9534f; }
+    .message-section { margin-bottom: 15px; }
+    .message-section label { display: block; margin-bottom: 5px; font-size: 12px; color: #666; }
+    .message-textarea { height: 100%; width: 100%; box-sizing: border-box; font-family: monospace; font-size: 12px; padding: 5px; border: 1px solid #ccc; background-color: white; resize: none; outline: none; border: none; }
+    .image-upload { width: 100%; box-sizing: border-box; font-size: 12px; padding: 5px; border: 1px solid #ccc; }
+    .contacts-section { height: 240px; margin-top: 15px; }
+    .contacts-section label { display: block; margin-bottom: 5px; font-size: 12px; color: #666; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>WA-Blaster</h1>
+    <div class="grid">
+      <div class="grid-item">
+        <div class="controls">
+          <button id="startContinueBtn">START (Continue)</button>
+          <button id="startNewBtn">START (New Session)</button>
+          <button id="stopBtn">STOP</button>
+          <button id="clearLogBtn">CLEAR LOG</button>
+          <button id="sendBtn" class="button-send">SEND BLAST</button>
+        </div>
+      </div>
+      <div class="grid-item">
+        <div class="controls">
+          <button id="clearUploadsBtn" class="button-danger">CLEAR UPLOADS</button>
+        </div>
+      </div>
+      <div class="grid-item">
+        <div class="status-text">Live Logs <span id="statusIndicator" class="status-indicator">...</span></div>
+      </div>
+      <div class="grid-item">
+        <div class="status-text">Message & Contacts</div>
+      </div>
+
+      <div class="grid-item logs-section">
+        <textarea id="liveLogs" class="logs-area" readonly placeholder="Blaster Logs..."></textarea>
+      </div>
+
+      <div class="grid-item right-panel">
+        <div class="message-section">
+          <label for="message">Message:</label>
+          <textarea id="message" class="message-textarea" rows="6" placeholder="Your message here..."></textarea>
+          <label for="imageUpload" style="margin-top: 10px;">Attach Image (optional):</label>
+          <input type="file" id="imageUpload" accept="image/*" class="image-upload">
+        </div>
+        <div class="contacts-section">
+          <label for="contacts">Enter Phone Numbers (one per line):</label>
+          <textarea id="contacts" class="whitelist-area" rows="6" placeholder="Enter phone numbers..."></textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    // --- UNIFIED SCRIPT ---
+    document.addEventListener('DOMContentLoaded', () => {
+        // --- Element Selection (null-safe) ---
+        const startContinueBtn = document.getElementById('startContinueBtn');
+        const startNewBtn = document.getElementById('startNewBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const clearLogBtn = document.getElementById('clearLogBtn');
+        const sendBtn = document.getElementById('sendBtn');
+        const clearUploadsBtn = document.getElementById('clearUploadsBtn');
+        const exportContactsBtn = document.getElementById('exportContactsBtn');
+        
+        const uploadFile = document.getElementById('uploadFile');
+        const imageUpload = document.getElementById('imageUpload');
+        
+        const uploadLabel = document.querySelector('.upload-label');
+        const contactsEl = document.getElementById('contacts');
+        const messageEl = document.getElementById('message');
+        const whitelistEl = document.getElementById('whitelist');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const liveLogs = document.getElementById('liveLogs');
+        
+        // --- Dynamic Configuration ---
+        const isBlasterPage = window.location.pathname.includes('blaster');
+        const API_PREFIX = isBlasterPage ? '/blaster' : '/bot';
+        const WS_PATH = isBlasterPage ? 'blaster-logs' : 'bot-logs';
+
+        // --- Utility Functions ---
+        function addLog(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            if (liveLogs) {
+                liveLogs.value += `[${timestamp}] ${message}\n`;
+                liveLogs.scrollTop = liveLogs.scrollHeight;
+            }
+            console[type === 'error' ? 'error' : 'log'](message);
+        }
+
+        function updateStatus(rawStatus) {
+            if (!statusIndicator) return;
+            const status = (rawStatus || 'offline').trim().toUpperCase();
+            statusIndicator.textContent = status;
+            statusIndicator.className = 'status-indicator'; // Reset classes
+            
+            const isOnline = status === 'ONLINE' || status === 'READY';
+            
+            if (startContinueBtn) startContinueBtn.disabled = isOnline;
+            if (startNewBtn) startNewBtn.disabled = isOnline;
+            if (stopBtn) stopBtn.disabled = !isOnline;
+
+            switch (status) {
+                case 'ONLINE':
+                case 'READY':
+                    statusIndicator.classList.add('status-online');
+                    break;
+                default:
+                    statusIndicator.classList.add('status-offline');
+                    break;
+            }
+        }
+        
+        async function pollStatus() {
+            try {
+                const res = await fetch(`${API_PREFIX}/status`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                updateStatus(data.status);
+            } catch (error) {
+                updateStatus('offline');
+            }
+        }
+
+        // --- WebSocket Setup ---
+        function connectWebSocket() {
+            const ws = new WebSocket(`ws://${location.hostname}:${location.port}/${WS_PATH}`);
+            ws.onopen = () => addLog('WebSocket connected.');
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'log') addLog(data.message);
+                    else if (data.type === 'error') addLog(`ERROR: ${data.message}`, 'error');
+                    else if (data.type === 'status') updateStatus(data.message); // For real-time updates from child process
+                    else if (data.type === 'qr') {
+                        addLog('QR Code received. Please scan with WhatsApp.');
+                        // You can add QR code display logic here if needed
+                    }
+                } catch (e) {
+                    addLog(`WebSocket parse error: ${e.message}`, 'error');
+                }
+            };
+            ws.onclose = () => {
+                addLog('WebSocket disconnected. Reconnecting in 5s...', 'error');
+                setTimeout(connectWebSocket, 5000);
+            };
+            ws.onerror = (err) => addLog(`WebSocket error.`, 'error');
+        }
+
+        // --- API Call Helper ---
+        function sendCommand(endpoint, body = {}) {
+            return fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            }).then(res => res.json());
+        }
+
+        // --- Event Handlers ---
+        startContinueBtn?.addEventListener('click', () => {
+            const whitelist = whitelistEl?.value?.split('\n').map(n => n.trim()).filter(Boolean).join(',') || '';
+            addLog(`Starting (continue)...`);
+            sendCommand(`${API_PREFIX}/start`, { sessionMode: 'continue', whitelist })
+                .then(data => addLog(data.message, data.status === 'error' ? 'error' : 'info'))
+                .finally(pollStatus);
+        });
+
+        startNewBtn?.addEventListener('click', () => {
+            const whitelist = whitelistEl?.value?.split('\n').map(n => n.trim()).filter(Boolean).join(',') || '';
+            addLog(`Starting (new session)...`);
+            sendCommand(`${API_PREFIX}/start`, { sessionMode: 'new', whitelist })
+                .then(data => addLog(data.message, data.status === 'error' ? 'error' : 'info'))
+                .finally(pollStatus);
+        });
+
+        stopBtn?.addEventListener('click', () => {
+            addLog('Stopping...');
+            sendCommand(`${API_PREFIX}/stop`)
+                .then(data => addLog(data.message, data.status === 'error' ? 'error' : 'info'))
+                .finally(pollStatus);
+        });
+        
+        clearLogBtn?.addEventListener('click', () => {
+            if(liveLogs) liveLogs.value = '';
+            addLog('Logs cleared.');
+        });
+
+        clearUploadsBtn?.addEventListener('click', () => {
+            if (!confirm('Are you sure you want to clear the uploads folder?')) return;
+            addLog('Clearing uploads folder...');
+            fetch('/clear-uploads', { method: 'POST' })
+                .then(res => res.json())
+                .then(data => {
+                    addLog(data.message, data.status === 'error' ? 'error' : 'info');
+                    if (data.status === 'success') {
+                        if (uploadLabel) uploadLabel.textContent = 'Upload messages.xlsx';
+                        if (uploadFile) uploadFile.value = '';
+                        if (imageUpload) imageUpload.value = '';
+                    }
+                }).catch(err => addLog(`Clear uploads error: ${err.message}`, 'error'));
+        });
+
+        uploadFile?.addEventListener('change', () => {
+            const file = uploadFile.files[0];
+            if (!file) return;
+            const formData = new FormData();
+            formData.append('messagesFile', file);
+            addLog(`Uploading: ${file.name}`);
+            if (uploadLabel) uploadLabel.textContent = 'Uploading...';
+            fetch(`${API_PREFIX}/upload`, { method: 'POST', body: formData })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        addLog(`Uploaded: ${data.filename}`, 'info');
+                        if (uploadLabel) uploadLabel.textContent = `Uploaded: ${data.filename}`;
+                    } else { throw new Error(data.message); }
+                }).catch(err => {
+                    addLog(`Upload error: ${err.message}`, 'error');
+                    if (uploadLabel) uploadLabel.textContent = 'Upload messages.xlsx';
+                });
+        });
+        
+        exportContactsBtn?.addEventListener('click', () => {
+            addLog('Exporting contacts...');
+            window.location.href = `${API_PREFIX}/export-contacts`;
+        });
+        
+        sendBtn?.addEventListener('click', async () => {
+            const contacts = contactsEl?.value?.split('\n').map(c => c.trim()).filter(Boolean);
+            const message = messageEl?.value?.trim();
+            const imageFile = imageUpload?.files[0];
+
+            if (!contacts || contacts.length === 0) return alert('Please enter at least one contact.');
+            if (!message && !imageFile) return alert('Please enter a message or select an image.');
+
+            const formData = new FormData();
+            formData.append('contacts', JSON.stringify(contacts));
+            formData.append('message', message || '');
+            if (imageFile) formData.append('blastImage', imageFile);
+
+            addLog('Sending blast...');
+            try {
+                const res = await fetch(`${API_PREFIX}/send`, { method: 'POST', body: formData });
+                const data = await res.json();
+                addLog(data.message, data.status === 'error' ? 'error' : 'info');
+            } catch (err) {
+                addLog(`Blast error: ${err.message}`, 'error');
+            }
+        });
+
+        // --- Initialization ---
+        if(liveLogs) liveLogs.value = '';
+        addLog(`Initialized ${isBlasterPage ? 'Blaster' : 'Bot'} interface.`);
+        connectWebSocket();
+        pollStatus(); // Initial status check
+        setInterval(pollStatus, 5000); // Poll every 5 seconds
+    });
+  </script>
+</body>
+</html>
